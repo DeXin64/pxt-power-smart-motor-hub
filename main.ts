@@ -384,7 +384,11 @@ namespace smartMotor {
     }
 
     function updateRobotTurn(): void {
-        if (!robotTurnActive || robotTurnMotionId != robotMotionId) {
+        if (!robotTurnActive) {
+            return
+        }
+        let motionId = robotTurnMotionId
+        if (motionId != robotMotionId) {
             return
         }
 
@@ -400,7 +404,7 @@ namespace smartMotor {
             || (robotTurnLastError < 0 && error >= 0)
         let stopTolerance = 1 + Math.max(0, robotTurnMaxSpeed - 50) / 50
         if (Math.abs(error) <= stopTolerance || crossedTarget) {
-            robotStopIfCurrentMotion(robotTurnMotionId)
+            robotStopIfCurrentMotion(motionId)
             return
         }
 
@@ -430,11 +434,18 @@ namespace smartMotor {
         }
         output = mapRobotTurnMotorSpeed(output)
         output = truncateTowardZero(output)
+        if (motionId != robotMotionId || !robotTurnActive) {
+            return
+        }
         sendRobotSpeed(output, -output)
     }
 
     function updateRobotDriveStraight(): void {
-        if (!robotDriveActive || robotDriveMotionId != robotMotionId) {
+        if (!robotDriveActive) {
+            return
+        }
+        let motionId = robotDriveMotionId
+        if (motionId != robotMotionId) {
             return
         }
 
@@ -450,7 +461,7 @@ namespace smartMotor {
         if (robotDriveMode == DriveMode.Seconds) {
             robotDriveTargetValue -= elapsed
             if (robotDriveTargetValue <= 0) {
-                robotStopIfCurrentMotion(robotDriveMotionId)
+                robotStopIfCurrentMotion(motionId)
                 return
             }
             let brakingTime = 1000 * brakingRatio
@@ -461,14 +472,14 @@ namespace smartMotor {
             let rightData = refreshFreshMotorData(robotRightMotor, MOTOR_DATA_REFRESH_ANGLE)
             if (rightData.length != MOTOR_DATA_RECORD_LENGTH
                 || (rightData[0] & MOTOR_DATA_ANGLE_VALID) == 0) {
-                robotStopIfCurrentMotion(robotDriveMotionId)
+                robotStopIfCurrentMotion(motionId)
                 return
             }
             let location = readI32Le(rightData, MOTOR_DATA_RELATIVE_ANGLE_OFFSET)
             let traveled = location - robotDriveLastLocation
             if ((robotDriveTargetValue > 0 && traveled >= robotDriveTargetValue)
                 || (robotDriveTargetValue < 0 && traveled <= robotDriveTargetValue)) {
-                robotStopIfCurrentMotion(robotDriveMotionId)
+                robotStopIfCurrentMotion(motionId)
                 return
             }
             robotDriveLastLocation = location
@@ -502,6 +513,9 @@ namespace smartMotor {
             -10, 10)
         let baseSpeed = robotDriveDirection == DriveDirection.Backward
             ? -robotDriveCurrentSpeed : robotDriveCurrentSpeed
+        if (motionId != robotMotionId || !robotDriveActive) {
+            return
+        }
         sendRobotSpeed(baseSpeed + output, baseSpeed - output)
     }
 
@@ -683,7 +697,8 @@ namespace smartMotor {
             return
         }
 
-        robotTurnMotionId = robotMotionId
+        let motionId = robotMotionId
+        robotTurnMotionId = motionId
         robotTurnTargetYaw = readRobotControlAngle() + turnAngle
         robotTurnCurrentSpeed = 8
         robotTurnMaxSpeed = Math.abs(turnSpeed)
@@ -694,7 +709,7 @@ namespace smartMotor {
         startRobotWorker()
 
         if (waitMode == WaitMode.Wait) {
-            while (robotTurnActive && robotTurnMotionId == robotMotionId) {
+            while (robotTurnActive && motionId == robotMotionId) {
                 basic.pause(10)
             }
         }
@@ -720,7 +735,7 @@ namespace smartMotor {
      * @param waitMode wait for completion or return after starting the background motion
      */
     export function robotDriveStraight(direction: DriveDirection, value: number, mode: DriveMode,
-        speed: number, accel: AccelLevel, waitMode: WaitMode): void {
+        speed: number, accel: AccelLevel, waitMode: WaitMode = WaitMode.Wait): void {
         cancelRobotMotion()
         if (mode == DriveMode.Millimeters && robotWheelDiameterMm <= 0) {
             return
@@ -731,7 +746,8 @@ namespace smartMotor {
             return
         }
 
-        robotDriveMotionId = robotMotionId
+        let motionId = robotMotionId
+        robotDriveMotionId = motionId
         robotDriveMode = mode
         robotDriveDirection = direction
         robotDriveTargetValue = driveValue * 10
@@ -764,7 +780,7 @@ namespace smartMotor {
         startRobotWorker()
 
         if (waitMode == WaitMode.Wait) {
-            while (robotDriveActive && robotDriveMotionId == robotMotionId) {
+            while (robotDriveActive && motionId == robotMotionId) {
                 basic.pause(10)
             }
         }

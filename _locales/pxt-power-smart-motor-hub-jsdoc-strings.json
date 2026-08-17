@@ -60,10 +60,13 @@
     "smartMotor.motorGetAbsoluteAngle|param|motor": "motor port M5-M8",
     "smartMotor.motorGetRelativeAngle": "Read the current motor relative angle in degrees.",
     "smartMotor.motorGetRelativeAngle|param|motor": "motor port M5-M8",
-    "smartMotor.resetGyroAngle": "Reset the gyroscope attitude angles.",
-    "smartMotor.readGyroAngularSpeed": "Read the gyroscope angular speed in degrees per second.",
+    "smartMotor.resetGyroAngle": "Reset the host position.",
+    "smartMotor.readGyroAngularSpeed": "Read the host acceleration value.",
     "smartMotor.readGyroAngularSpeed|param|axis": "pitch, yaw, or roll axis",
-    "smartMotor.readGyroAngle": "Read the gyroscope attitude angle in degrees.",
+    "smartMotor.readGyroAngle": "Read the host angle in degrees.",
     "smartMotor.readGyroAngle|param|axis": "pitch, yaw, or roll axis",
-    "smartMotor.readVersion": "Read the controller firmware version."
+    "smartMotor.readVersion": "Read the controller firmware version.",
+    "smartMotor.RobotLoad": "Robot load level.",
+    "smartMotor.robotSetLoad": "Set the robot load level.",
+    "smartMotor.robotSetLoad|param|load": "light, medium, or heavy load"
 }

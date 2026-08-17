@@ -102,6 +102,16 @@ namespace smartMotor {
         Fast = 2
     }
 
+    /** Robot load level. */
+    export enum RobotLoad {
+        //% block="light"
+        Light = 0,
+        //% block="medium"
+        Medium = 1,
+        //% block="heavy"
+        Heavy = 2
+    }
+
     /** Whether a motor or robot command waits until the motion is complete. */
     export enum WaitMode {
         //% block="do not wait"
@@ -133,6 +143,7 @@ namespace smartMotor {
     let robotWheelDiameterMm = ROBOT_DEFAULT_WHEEL_DIAMETER_MM
     let robotGyroAxis = GyroAxis.Yaw
     let robotGyroMirror = GyroMirror.Mirrored
+    let robotLoad = RobotLoad.Medium
     let robotMotionId = 0
     let robotTurnActive = false
     let robotDriveActive = false
@@ -909,7 +920,7 @@ namespace smartMotor {
     }
 
     //% group="Robot"
-    //% blockId=smartmotor_robot_set_motors block="robot left wheel $leftMotor and right wheel $rightMotor"
+    //% blockId=smartmotor_robot_set_motors block="robot set left wheel $leftMotor and set right wheel $rightMotor"
     //% leftMotor.defl=smartMotor.MotorPort.M5
     //% rightMotor.defl=smartMotor.MotorPort.M6
     //% weight=79
@@ -927,10 +938,22 @@ namespace smartMotor {
     }
 
     //% group="Robot"
+    //% blockId=smartmotor_robot_set_load block="robot set load $load"
+    //% load.defl=smartMotor.RobotLoad.Medium
+    //% weight=78
+    /**
+     * Set the robot load level.
+     * @param load light, medium, or heavy load
+     */
+    export function robotSetLoad(load: RobotLoad): void {
+        robotLoad = load
+    }
+
+    //% group="Robot"
     //% blockId=smartmotor_robot_set_gyro block="robot gyroscope axis $axis mirror $mirror"
     //% axis.defl=smartMotor.GyroAxis.Yaw
     //% mirror.defl=smartMotor.GyroMirror.Mirrored
-    //% weight=78
+    //% weight=77
     /**
      * Select the gyroscope axis and direction used by robot turn and straight-drive correction.
      * @param axis pitch, yaw, or roll axis
@@ -950,7 +973,7 @@ namespace smartMotor {
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
     //% expandableArgumentMode="toggle"
-    //% weight=77
+    //% weight=76
     /**
      * Turn the robot in place using gyroscope feedback.
      * @param angle turn angle in degrees, -360 to 360
@@ -1000,7 +1023,7 @@ namespace smartMotor {
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
     //% expandableArgumentMode="toggle"
-    //% weight=76
+    //% weight=75
     /**
      * Drive the robot straight using a distance, time, or wheel-angle value.
      * @param direction forward or backward
@@ -1069,7 +1092,7 @@ namespace smartMotor {
 
     //% group="Robot"
     //% blockId=smartmotor_robot_stop block="robot stop"
-    //% weight=76
+    //% weight=74
     /**
      * Stop robot motion.
      */
@@ -1078,9 +1101,6 @@ namespace smartMotor {
         i2cCommandSend(COMMAND_STOP, [robotMotorMask()])
     }
 
-    //% group="Robot"
-    //% blockId=smartmotor_robot_is_idle block="robot is idle"
-    //% weight=75
     /**
      * Check whether the robot has no active turn or straight-drive motion.
      */
@@ -1140,7 +1160,7 @@ namespace smartMotor {
     }
 
     //% group="Gyroscope"
-    //% blockId=smartmotor_gyro_reset block="gyroscope reset"
+    //% blockId=smartmotor_gyro_reset block="host position reset"
     //% weight=60
     /**
      * Reset the gyroscope attitude angles.
@@ -1166,7 +1186,7 @@ namespace smartMotor {
     }
 
     //% group="Gyroscope"
-    //% blockId=smartmotor_gyro_angular_speed block="gyroscope $axis angular speed (degrees/s)"
+    //% blockId=smartmotor_gyro_angular_speed block="host $axis acceleration (mg)"
     //% axis.defl=smartMotor.GyroAxis.Pitch
     //% weight=59
     /**
@@ -1194,7 +1214,7 @@ namespace smartMotor {
     }
 
     //% group="Gyroscope"
-    //% blockId=smartmotor_gyro_angle block="gyroscope $axis angle (degrees)"
+    //% blockId=smartmotor_gyro_angle block="host $axis angle (degrees)"
     //% axis.defl=smartMotor.GyroAxis.Pitch
     //% weight=58
     /**

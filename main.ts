@@ -28,6 +28,11 @@ namespace smartMotor {
     const MOTOR_DATA_REFRESH_SPEED = 0x02
     const ROBOT_INVALID_GYRO_ANGLE = 1000000000
     const ROBOT_DEFAULT_WHEEL_DIAMETER_MM = 62
+    const MOTOR_WAIT_POLL_INTERVAL_MS = 20
+    const MOTOR_WAIT_ANGLE_TOLERANCE_X10 = 20
+    const MOTOR_WAIT_SPEED_TOLERANCE = 5
+    const MOTOR_RESET_TIMEOUT_MS = 5000
+    const ROBOT_TURN_TIMEOUT_MS = 30000
 
     /** Motor connector shown on the Power Smart Motor Hub. */
     export enum MotorPort {
@@ -47,6 +52,26 @@ namespace smartMotor {
         Clockwise = 0,
         //% block="counterclockwise"
         Counterclockwise = 1
+    }
+
+    /** Unit used by the relative motor move block. */
+    export enum MotorMoveUnit {
+        //% block="circle"
+        Circle = 1,
+        //% block="degree"
+        Degree = 2,
+        //% block="second"
+        Second = 3
+    }
+
+    /** Turn mode used by the absolute motor move block. */
+    export enum MotorTurnMode {
+        //% block="clockwise"
+        Clockwise = 0,
+        //% block="counterclockwise"
+        Counterclockwise = 1,
+        //% block="shortest path"
+        ShortestPath = 2
     }
 
     /** Robot straight-drive direction. */
@@ -77,7 +102,7 @@ namespace smartMotor {
         Fast = 2
     }
 
-    /** Whether a robot command waits until the motion is complete. */
+    /** Whether a motor or robot command waits until the motion is complete. */
     export enum WaitMode {
         //% block="do not wait"
         NoWait = 0,
@@ -119,6 +144,7 @@ namespace smartMotor {
     let robotTurnLastError = 0
     let robotTurnLastTime = 0
     let robotTurnAccel = AccelLevel.Medium
+    let robotTurnDeadlineMs = 0
     let robotDriveMotionId = 0
     let robotDriveMode = DriveMode.Seconds
     let robotDriveDirection = DriveDirection.Forward
@@ -131,9 +157,11 @@ namespace smartMotor {
     let robotDriveTargetYaw = 0
     let robotDriveLastTime = 0
     let robotDriveAccel = AccelLevel.Medium
+    let robotDriveDeadlineMs = 0
     let lastQueryWasSuccessful = false
     let queryCacheKeys: string[] = []
     let queryCacheData: Buffer[] = []
+    let motorMotionIds: number[] = [0, 0, 0, 0, 0]
     let gyroSpeedLastAngle: number[] = [0, 0, 0]
     let gyroSpeedLastTime: number[] = [0, 0, 0]
     let gyroSpeedHasSample: boolean[] = [false, false, false]
@@ -264,6 +292,9 @@ namespace smartMotor {
 
     function readRobotControlAngle(): number {
         let angle = readFreshGyroAngle(robotGyroAxis)
+        if (!gyroAngleIsValid(angle)) {
+            return ROBOT_INVALID_GYRO_ANGLE
+        }
         return robotGyroMirror == GyroMirror.Mirrored ? -angle : angle
     }
 
@@ -275,6 +306,16 @@ namespace smartMotor {
     function normalizeAngleX10(angleX10: number): number {
         let normalized = angleX10 % 3600
         return normalized < 0 ? normalized + 3600 : normalized
+    }
+
+    function circularAngleErrorX10(targetX10: number, currentX10: number): number {
+        let error = normalizeAngleX10(targetX10) - normalizeAngleX10(currentX10)
+        if (error > 1800) {
+            error -= 3600
+        } else if (error < -1800) {
+            error += 3600
+        }
+        return error
     }
 
     function motorMask(motor: MotorPort): number {
@@ -289,6 +330,24 @@ namespace smartMotor {
         let reverse = signedSpeed(speed) < 0
         let counterclockwise = direction == MotorDirection.Counterclockwise
         return reverse != counterclockwise ? 1 : 0
+    }
+
+    function motorTurnModeByte(turnMode: MotorTurnMode, speed: number): number {
+        if (turnMode == MotorTurnMode.ShortestPath) {
+            return 2
+        }
+        let reverse = signedSpeed(speed) < 0
+        let counterclockwise = turnMode == MotorTurnMode.Counterclockwise
+        return reverse != counterclockwise ? 1 : 0
+    }
+
+    function nextMotorMotionId(motor: MotorPort): number {
+        motorMotionIds[motor]++
+        return motorMotionIds[motor]
+    }
+
+    function motorMotionIsCurrent(motor: MotorPort, motionId: number): boolean {
+        return motorMotionIds[motor] == motionId
     }
 
     function robotMotorMask(): number {
@@ -335,24 +394,163 @@ namespace smartMotor {
         return value < 0 ? Math.ceil(value) : Math.floor(value)
     }
 
-    function sendMotorRelativeStep(motor: MotorPort, angle: number, speed: number): void {
-        if (angle == 0 || speed == 0) {
+    function stopMotor(motor: MotorPort): void {
+        i2cCommandSend(COMMAND_STOP, [motorMask(motor)])
+    }
+
+    function stopMotorIfCurrentMotion(motor: MotorPort, motionId: number): void {
+        if (motorMotionIsCurrent(motor, motionId)) {
+            stopMotor(motor)
+        }
+    }
+
+    function motorRelativeValueX10(value: number, unit: MotorMoveUnit): number {
+        let magnitude = Math.abs(value)
+        if (unit == MotorMoveUnit.Circle) {
+            return Math.round(magnitude * 3600)
+        }
+        if (unit == MotorMoveUnit.Degree) {
+            magnitude = clamp(magnitude, 0, 360)
+        }
+        return Math.round(magnitude * 10)
+    }
+
+    function motorRelativeTargetDegrees(value: number, unit: MotorMoveUnit): number {
+        if (unit == MotorMoveUnit.Circle) {
+            return Math.abs(value) * 360
+        }
+        if (unit == MotorMoveUnit.Second) {
+            return 0
+        }
+        return clamp(Math.abs(value), 0, 360)
+    }
+
+    function motorRelativeTimeoutMs(value: number, speed: number, unit: MotorMoveUnit): number {
+        if (unit == MotorMoveUnit.Second) {
+            return Math.round(Math.abs(value) * 1000 + 1000)
+        }
+        let degrees = motorRelativeTargetDegrees(value, unit)
+        return Math.round(degrees * 1000 / Math.max(Math.abs(speed) * 9, 1) + 1000)
+    }
+
+    function motorAbsoluteTimeoutMs(speed: number): number {
+        return Math.round(360 * 1000 / Math.max(Math.abs(speed) * 9, 1) + 1000)
+    }
+
+    function robotDriveTimeoutMs(value: number, speed: number, mode: DriveMode): number {
+        if (mode == DriveMode.Seconds) {
+            return Math.round(value * 1000 + Math.max(2000, value * 100))
+        }
+        return Math.round(Math.max(10000, 3000 + value * 150 / Math.max(10, speed)))
+    }
+
+    function sendMotorRelativeStep(motor: MotorPort, value: number, speed: number,
+        direction: MotorDirection, unit: MotorMoveUnit): void {
+        if (value <= 0 || speed == 0) {
             return
         }
-        let valueX10 = Math.abs(Math.round(clamp(angle, 0, 360) * 10))
+        let valueX10 = motorRelativeValueX10(value, unit)
         let speedPercent = Math.abs(signedSpeed(speed))
-        let reverse = signedSpeed(speed) < 0
-        let counterclockwise = angle < 0
         i2cCommandSend(COMMAND_MOVE, [
             motor,
-            2,
+            unit,
             (valueX10 >> 24) & 0xFF,
             (valueX10 >> 16) & 0xFF,
             (valueX10 >> 8) & 0xFF,
             valueX10 & 0xFF,
             speedPercent,
-            reverse != counterclockwise ? 1 : 0
+            motorDirectionBit(direction, speed)
         ])
+    }
+
+    function waitForMotorReset(motor: MotorPort, motionId: number, timeoutMs: number): void {
+        let deadline = input.runningTime() + timeoutMs
+        while (motorMotionIsCurrent(motor, motionId) && input.runningTime() < deadline) {
+            let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE | MOTOR_DATA_REFRESH_SPEED)
+            if (data.length == MOTOR_DATA_RECORD_LENGTH
+                && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+                let relativeX10 = readI32Le(data, MOTOR_DATA_RELATIVE_ANGLE_OFFSET)
+                let absoluteX10 = circularAngleErrorX10(0, readI32Le(data, MOTOR_DATA_ABSOLUTE_ANGLE_OFFSET))
+                let speedOk = (data[0] & MOTOR_DATA_SPEED_VALID) == 0
+                    || Math.abs(readI16Le(data, MOTOR_DATA_SPEED_OFFSET)) <= MOTOR_WAIT_SPEED_TOLERANCE
+                if (Math.abs(relativeX10) <= MOTOR_WAIT_ANGLE_TOLERANCE_X10
+                    && Math.abs(absoluteX10) <= MOTOR_WAIT_ANGLE_TOLERANCE_X10
+                    && speedOk) {
+                    return
+                }
+            }
+            basic.pause(MOTOR_WAIT_POLL_INTERVAL_MS)
+        }
+        stopMotorIfCurrentMotion(motor, motionId)
+    }
+
+    function waitForMotorRelativeMove(motor: MotorPort, startRelativeX10: number,
+        hasStart: boolean, targetDegrees: number, directionSign: number,
+        motionId: number, timeoutMs: number): void {
+        let deadline = input.runningTime() + timeoutMs
+        while (motorMotionIsCurrent(motor, motionId) && input.runningTime() < deadline) {
+            let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE | MOTOR_DATA_REFRESH_SPEED)
+            if (data.length == MOTOR_DATA_RECORD_LENGTH
+                && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+                let currentRelativeX10 = readI32Le(data, MOTOR_DATA_RELATIVE_ANGLE_OFFSET)
+                if (!hasStart) {
+                    startRelativeX10 = currentRelativeX10
+                    hasStart = true
+                }
+                let traveledX10 = (currentRelativeX10 - startRelativeX10) * directionSign
+                let speedOk = (data[0] & MOTOR_DATA_SPEED_VALID) != 0
+                    && Math.abs(readI16Le(data, MOTOR_DATA_SPEED_OFFSET)) <= MOTOR_WAIT_SPEED_TOLERANCE
+                if (traveledX10 >= targetDegrees * 10 - MOTOR_WAIT_ANGLE_TOLERANCE_X10
+                    && speedOk) {
+                    return
+                }
+            }
+            basic.pause(MOTOR_WAIT_POLL_INTERVAL_MS)
+        }
+        stopMotorIfCurrentMotion(motor, motionId)
+    }
+
+    function waitForMotorTimedMove(motor: MotorPort, runMs: number,
+        motionId: number, timeoutMs: number): void {
+        let start = input.runningTime()
+        let deadline = start + timeoutMs
+        while (motorMotionIsCurrent(motor, motionId) && input.runningTime() < deadline) {
+            let elapsed = input.runningTime() - start
+            if (elapsed >= runMs) {
+                let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_SPEED)
+                if (data.length == MOTOR_DATA_RECORD_LENGTH
+                    && (data[0] & MOTOR_DATA_SPEED_VALID) != 0
+                    && Math.abs(readI16Le(data, MOTOR_DATA_SPEED_OFFSET)) <= MOTOR_WAIT_SPEED_TOLERANCE) {
+                    return
+                }
+            }
+            basic.pause(MOTOR_WAIT_POLL_INTERVAL_MS)
+        }
+        stopMotorIfCurrentMotion(motor, motionId)
+    }
+
+    function waitForMotorAbsoluteMove(motor: MotorPort, targetX10: number,
+        requireMovement: boolean, motionId: number, timeoutMs: number): void {
+        let deadline = input.runningTime() + timeoutMs
+        let movedAway = !requireMovement
+        while (motorMotionIsCurrent(motor, motionId) && input.runningTime() < deadline) {
+            let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE | MOTOR_DATA_REFRESH_SPEED)
+            if (data.length == MOTOR_DATA_RECORD_LENGTH
+                && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+                let errorX10 = circularAngleErrorX10(targetX10,
+                    readI32Le(data, MOTOR_DATA_ABSOLUTE_ANGLE_OFFSET))
+                if (Math.abs(errorX10) > MOTOR_WAIT_ANGLE_TOLERANCE_X10) {
+                    movedAway = true
+                }
+                let speedOk = (data[0] & MOTOR_DATA_SPEED_VALID) == 0
+                    || Math.abs(readI16Le(data, MOTOR_DATA_SPEED_OFFSET)) <= MOTOR_WAIT_SPEED_TOLERANCE
+                if (movedAway && Math.abs(errorX10) <= MOTOR_WAIT_ANGLE_TOLERANCE_X10 && speedOk) {
+                    return
+                }
+            }
+            basic.pause(MOTOR_WAIT_POLL_INTERVAL_MS)
+        }
+        stopMotorIfCurrentMotion(motor, motionId)
     }
 
     function turnAccelerationForLevel(accel: AccelLevel): number {
@@ -393,13 +591,22 @@ namespace smartMotor {
         }
 
         let now = input.runningTime()
+        if (robotTurnDeadlineMs > 0 && now >= robotTurnDeadlineMs) {
+            robotStopIfCurrentMotion(motionId)
+            return
+        }
         let elapsed = now - robotTurnLastTime
         if (elapsed <= 0) {
             return
         }
         robotTurnLastTime = now
 
-        let error = robotTurnTargetYaw - readRobotControlAngle()
+        let currentYaw = readRobotControlAngle()
+        if (!gyroAngleIsValid(currentYaw)) {
+            robotStopIfCurrentMotion(motionId)
+            return
+        }
+        let error = robotTurnTargetYaw - currentYaw
         let crossedTarget = (robotTurnLastError > 0 && error <= 0)
             || (robotTurnLastError < 0 && error >= 0)
         let stopTolerance = 1 + Math.max(0, robotTurnMaxSpeed - 50) / 50
@@ -450,6 +657,10 @@ namespace smartMotor {
         }
 
         let now = input.runningTime()
+        if (robotDriveDeadlineMs > 0 && now >= robotDriveDeadlineMs) {
+            robotStopIfCurrentMotion(motionId)
+            return
+        }
         let elapsed = now - robotDriveLastTime
         if (elapsed <= 0) {
             return
@@ -505,7 +716,12 @@ namespace smartMotor {
             robotDriveCurrentSpeed = 8
         }
 
-        let error = robotDriveTargetYaw - readRobotControlAngle()
+        let currentYaw = readRobotControlAngle()
+        if (!gyroAngleIsValid(currentYaw)) {
+            robotStopIfCurrentMotion(motionId)
+            return
+        }
+        let error = robotDriveTargetYaw - currentYaw
         robotDriveIntegral = clamp(robotDriveIntegral + error * dt, -40, 40)
         let derivative = (error - robotDriveLastError) / dt
         robotDriveLastError = error
@@ -547,6 +763,7 @@ namespace smartMotor {
      */
     export function motorStart(motor: MotorPort, direction: MotorDirection, speed: number): void {
         cancelRobotMotion()
+        nextMotorMotionId(motor)
         let speedPercent = Math.abs(signedSpeed(speed))
         i2cCommandSend(COMMAND_SET_SPEED, [motor, speedPercent, motorDirectionBit(direction, speed)])
     }
@@ -561,40 +778,56 @@ namespace smartMotor {
      */
     export function motorStop(motor: MotorPort): void {
         cancelRobotMotion()
+        nextMotorMotionId(motor)
         i2cCommandSend(COMMAND_STOP, [motorMask(motor)])
     }
 
     //% group="Position"
-    //% blockId=smartmotor_motor_reset block="motor $motor reset position"
+    //% blockId=smartmotor_motor_reset block="motor $motor reset position || $waitMode"
     //% motor.defl=smartMotor.MotorPort.M5
+    //% waitMode.defl=smartMotor.WaitMode.Wait
+    //% expandableArgumentMode="toggle"
     //% weight=90
     /**
      * Reset the current motor position to zero.
      * @param motor motor port M5-M8
+     * @param waitMode wait for completion or return after starting the motion
      */
-    export function motorReset(motor: MotorPort): void {
+    export function motorReset(motor: MotorPort, waitMode: WaitMode = WaitMode.Wait): void {
         cancelRobotMotion()
+        let motionId = nextMotorMotionId(motor)
         i2cCommandSend(COMMAND_RESET_PHYSICAL, [motorMask(motor)])
+        if (waitMode == WaitMode.Wait) {
+            waitForMotorReset(motor, motionId, MOTOR_RESET_TIMEOUT_MS)
+        }
     }
 
     //% group="Position"
-    //% blockId=smartmotor_motor_move_absolute block="motor $motor rotate to absolute angle $angle speed $speed"
+    //% blockId=smartmotor_motor_move_absolute block="motor $motor speed $speed $turnMode rotate to absolute angle $angle || $waitMode"
     //% motor.defl=smartMotor.MotorPort.M5
     //% angle.min=0 angle.max=360 angle.defl=90
     //% speed.min=-100 speed.max=100 speed.defl=50
+    //% turnMode.defl=smartMotor.MotorTurnMode.ShortestPath
+    //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
+    //% expandableArgumentMode="toggle"
     //% weight=89
     /**
      * Rotate a motor to an absolute angle.
      * @param motor motor port M5-M8
      * @param angle target angle in degrees, 0 to 360
      * @param speed speed from -100 to 100
+     * @param turnMode clockwise, counterclockwise, or shortest path
+     * @param waitMode wait for completion or return after starting the motion
      */
-    export function motorMoveAbsolute(motor: MotorPort, angle: number, speed: number): void {
-        if (speed == 0) {
+    export function motorMoveAbsolute(motor: MotorPort, angle: number, speed: number,
+        turnMode: MotorTurnMode = MotorTurnMode.ShortestPath,
+        waitMode: WaitMode = WaitMode.Wait): void {
+        if (signedSpeed(speed) == 0) {
             return
         }
         cancelRobotMotion()
+        let motionId = nextMotorMotionId(motor)
         let normalized = normalizeAngleX10(Math.round(angle * 10))
         let speedPercent = Math.abs(signedSpeed(speed))
         i2cCommandSend(COMMAND_MOVE_ABSOLUTE, [
@@ -602,29 +835,65 @@ namespace smartMotor {
             (normalized >> 8) & 0xFF,
             normalized & 0xFF,
             speedPercent,
-            2
+            motorTurnModeByte(turnMode, speed)
         ])
+        if (waitMode == WaitMode.Wait) {
+            waitForMotorAbsoluteMove(motor, normalized,
+                turnMode != MotorTurnMode.ShortestPath, motionId, motorAbsoluteTimeoutMs(speed))
+        }
     }
 
     //% group="Position"
-    //% blockId=smartmotor_motor_move_relative block="motor $motor rotate angle $angle speed $speed"
+    //% blockId=smartmotor_motor_move_relative block="motor $motor speed $speed direction $direction run $angle $unit || $waitMode"
     //% motor.defl=smartMotor.MotorPort.M5
-    //% angle.min=0 angle.max=360 angle.defl=90
+    //% angle.min=0 angle.max=10000 angle.defl=90
     //% speed.min=-100 speed.max=100 speed.defl=50
+    //% direction.defl=smartMotor.MotorDirection.Clockwise
+    //% unit.defl=smartMotor.MotorMoveUnit.Degree
+    //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
+    //% expandableArgumentMode="toggle"
     //% weight=88
     /**
      * Rotate a motor by a relative angle.
      * @param motor motor port M5-M8
-     * @param angle relative angle in degrees, 0 to 360
+     * @param angle relative value, interpreted by the selected unit
      * @param speed speed from -100 to 100
+     * @param direction clockwise or counterclockwise direction
+     * @param unit circle, degree, or second
+     * @param waitMode wait for completion or return after starting the motion
      */
-    export function motorMoveRelative(motor: MotorPort, angle: number, speed: number): void {
-        if (angle == 0 || speed == 0) {
+    export function motorMoveRelative(motor: MotorPort, angle: number, speed: number,
+        direction: MotorDirection = MotorDirection.Clockwise,
+        unit: MotorMoveUnit = MotorMoveUnit.Degree,
+        waitMode: WaitMode = WaitMode.Wait): void {
+        let moveValue = angle
+        if (moveValue <= 0 || signedSpeed(speed) == 0) {
             return
         }
         cancelRobotMotion()
-        sendMotorRelativeStep(motor, angle, speed)
+        let motionId = nextMotorMotionId(motor)
+        let startRelativeX10 = 0
+        let hasStart = false
+        if (waitMode == WaitMode.Wait && unit != MotorMoveUnit.Second) {
+            let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE)
+            if (data.length == MOTOR_DATA_RECORD_LENGTH
+                && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+                startRelativeX10 = readI32Le(data, MOTOR_DATA_RELATIVE_ANGLE_OFFSET)
+                hasStart = true
+            }
+        }
+        sendMotorRelativeStep(motor, moveValue, speed, direction, unit)
+        if (waitMode == WaitMode.Wait) {
+            let timeoutMs = motorRelativeTimeoutMs(moveValue, speed, unit)
+            if (unit == MotorMoveUnit.Second) {
+                waitForMotorTimedMove(motor, Math.round(moveValue * 1000), motionId, timeoutMs)
+            } else {
+                let directionSign = motorDirectionBit(direction, speed) == 0 ? 1 : -1
+                waitForMotorRelativeMove(motor, startRelativeX10, hasStart,
+                    motorRelativeTargetDegrees(moveValue, unit), directionSign, motionId, timeoutMs)
+            }
+        }
     }
 
     //% group="Robot"
@@ -674,12 +943,13 @@ namespace smartMotor {
     }
 
     //% group="Robot"
-    //% blockId=smartmotor_robot_turn block="robot turn $angle degrees speed $speed acceleration $accel $waitMode"
+    //% blockId=smartmotor_robot_turn block="robot turn $angle degrees speed $speed acceleration $accel || $waitMode"
     //% angle.min=-360 angle.max=360 angle.defl=90
     //% speed.min=0 speed.max=100 speed.defl=50
     //% accel.defl=smartMotor.AccelLevel.Medium
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
+    //% expandableArgumentMode="toggle"
     //% weight=77
     /**
      * Turn the robot in place using gyroscope feedback.
@@ -698,13 +968,18 @@ namespace smartMotor {
         }
 
         let motionId = robotMotionId
+        let currentYaw = readRobotControlAngle()
+        if (!gyroAngleIsValid(currentYaw)) {
+            return
+        }
         robotTurnMotionId = motionId
-        robotTurnTargetYaw = readRobotControlAngle() + turnAngle
+        robotTurnTargetYaw = currentYaw + turnAngle
         robotTurnCurrentSpeed = 8
         robotTurnMaxSpeed = Math.abs(turnSpeed)
         robotTurnLastError = turnAngle
         robotTurnLastTime = input.runningTime()
         robotTurnAccel = accel
+        robotTurnDeadlineMs = robotTurnLastTime + ROBOT_TURN_TIMEOUT_MS
         robotTurnActive = true
         startRobotWorker()
 
@@ -716,7 +991,7 @@ namespace smartMotor {
     }
 
     //% group="Robot"
-    //% blockId=smartmotor_robot_drive_straight block="robot drive $direction $value $mode speed $speed acceleration $accel $waitMode"
+    //% blockId=smartmotor_robot_drive_straight block="robot drive $direction $value $mode speed $speed acceleration $accel || $waitMode"
     //% direction.defl=smartMotor.DriveDirection.Forward
     //% value.min=0 value.max=10000 value.defl=100
     //% mode.defl=smartMotor.DriveMode.Millimeters
@@ -724,6 +999,7 @@ namespace smartMotor {
     //% accel.defl=smartMotor.AccelLevel.Medium
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
+    //% expandableArgumentMode="toggle"
     //% weight=76
     /**
      * Drive the robot straight using a distance, time, or wheel-angle value.
@@ -773,9 +1049,14 @@ namespace smartMotor {
         robotDriveMaxSpeed = driveSpeed * 0.9
         robotDriveLastError = 0
         robotDriveIntegral = 0
-        robotDriveTargetYaw = readRobotControlAngle()
+        let currentYaw = readRobotControlAngle()
+        if (!gyroAngleIsValid(currentYaw)) {
+            return
+        }
+        robotDriveTargetYaw = currentYaw
         robotDriveLastTime = input.runningTime()
         robotDriveAccel = accel
+        robotDriveDeadlineMs = robotDriveLastTime + robotDriveTimeoutMs(driveValue, driveSpeed, mode)
         robotDriveActive = true
         startRobotWorker()
 

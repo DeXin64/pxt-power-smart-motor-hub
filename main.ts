@@ -31,8 +31,10 @@ namespace smartMotor {
     const MOTOR_WAIT_POLL_INTERVAL_MS = 20
     const MOTOR_WAIT_ANGLE_TOLERANCE_X10 = 20
     const MOTOR_WAIT_SPEED_TOLERANCE = 5
-    const MOTOR_RESET_TIMEOUT_MS = 5000
-    const ROBOT_TURN_TIMEOUT_MS = 30000
+    const MOTOR_RESET_ESTIMATED_SPEED_PERCENT = 100
+    const NEZHA_ESTIMATE_BUFFER_MS = 500
+    const MOTION_TIMEOUT_GUARD_MS = 500
+    const ROBOT_TURN_GYRO_UNCHANGED_TIMEOUT_MS = 2000
 
     /** Motor connector shown on the Power Smart Motor Hub. */
     export enum MotorPort {
@@ -155,7 +157,8 @@ namespace smartMotor {
     let robotTurnLastError = 0
     let robotTurnLastTime = 0
     let robotTurnAccel = AccelLevel.Medium
-    let robotTurnDeadlineMs = 0
+    let robotTurnLastYaw = ROBOT_INVALID_GYRO_ANGLE
+    let robotTurnUnchangedMs = 0
     let robotDriveMotionId = 0
     let robotDriveMode = DriveMode.Seconds
     let robotDriveDirection = DriveDirection.Forward
@@ -436,23 +439,76 @@ namespace smartMotor {
         return clamp(Math.abs(value), 0, 360)
     }
 
+    function nezhaSpeedUnit(speed: number): number {
+        return Math.max(Math.abs(speed) * 9, 1)
+    }
+
+    function nezhaEstimatedDegreeMs(degrees: number, speed: number): number {
+        return Math.abs(degrees) * 1000 / nezhaSpeedUnit(speed) + NEZHA_ESTIMATE_BUFFER_MS
+    }
+
+    function nezhaEstimatedSecondMs(seconds: number): number {
+        return Math.abs(seconds) * 1000
+    }
+
+    function motionTimeoutMs(estimatedMs: number): number {
+        return Math.round(Math.max(estimatedMs, 0) + MOTION_TIMEOUT_GUARD_MS)
+    }
+
+    function accelerationGuardMs(speed: number, acceleration: number): number {
+        return Math.round(Math.abs(speed) * 1000 / Math.max(acceleration, 1))
+    }
+
     function motorRelativeTimeoutMs(value: number, speed: number, unit: MotorMoveUnit): number {
         if (unit == MotorMoveUnit.Second) {
-            return Math.round(Math.abs(value) * 1000 + 1000)
+            return motionTimeoutMs(nezhaEstimatedSecondMs(value))
         }
         let degrees = motorRelativeTargetDegrees(value, unit)
-        return Math.round(degrees * 1000 / Math.max(Math.abs(speed) * 9, 1) + 1000)
+        return motionTimeoutMs(nezhaEstimatedDegreeMs(degrees, speed))
     }
 
-    function motorAbsoluteTimeoutMs(speed: number): number {
-        return Math.round(360 * 1000 / Math.max(Math.abs(speed) * 9, 1) + 1000)
-    }
-
-    function robotDriveTimeoutMs(value: number, speed: number, mode: DriveMode): number {
-        if (mode == DriveMode.Seconds) {
-            return Math.round(value * 1000 + Math.max(2000, value * 100))
+    function motorResetTimeoutMs(motor: MotorPort): number {
+        let degrees = 360
+        let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE)
+        if (data.length == MOTOR_DATA_RECORD_LENGTH
+            && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+            degrees = Math.abs(circularAngleErrorX10(0,
+                readI32Le(data, MOTOR_DATA_ABSOLUTE_ANGLE_OFFSET))) / 10
         }
-        return Math.round(Math.max(10000, 3000 + value * 150 / Math.max(10, speed)))
+        return motionTimeoutMs(nezhaEstimatedDegreeMs(degrees,
+            MOTOR_RESET_ESTIMATED_SPEED_PERCENT))
+    }
+
+    function motorAbsoluteMoveDegrees(targetX10: number, currentX10: number,
+        turnMode: MotorTurnMode, speed: number): number {
+        if (turnMode == MotorTurnMode.ShortestPath) {
+            return Math.abs(circularAngleErrorX10(targetX10, currentX10)) / 10
+        }
+        let current = normalizeAngleX10(currentX10)
+        let target = normalizeAngleX10(targetX10)
+        let effectiveCounterclockwise = motorTurnModeByte(turnMode, speed) == 1
+        let deltaX10 = effectiveCounterclockwise
+            ? normalizeAngleX10(current - target)
+            : normalizeAngleX10(target - current)
+        return deltaX10 == 0 ? 360 : deltaX10 / 10
+    }
+
+    function motorAbsoluteTimeoutMs(degrees: number, speed: number): number {
+        return motionTimeoutMs(nezhaEstimatedDegreeMs(degrees, speed))
+    }
+
+    function robotDriveTimeoutMs(value: number, speed: number, mode: DriveMode,
+        accel: AccelLevel): number {
+        if (mode == DriveMode.Seconds) {
+            return motionTimeoutMs(nezhaEstimatedSecondMs(value))
+        }
+        let wheelDegrees = value
+        if (mode == DriveMode.Millimeters) {
+            wheelDegrees = value * 360 / (robotWheelDiameterMm * Math.PI)
+        }
+        let effectiveSpeed = speed * 0.9
+        return motionTimeoutMs(nezhaEstimatedDegreeMs(wheelDegrees, effectiveSpeed)
+            + accelerationGuardMs(effectiveSpeed, driveAccelerationForLevel(accel)))
     }
 
     function sendMotorRelativeStep(motor: MotorPort, value: number, speed: number,
@@ -602,10 +658,6 @@ namespace smartMotor {
         }
 
         let now = input.runningTime()
-        if (robotTurnDeadlineMs > 0 && now >= robotTurnDeadlineMs) {
-            robotStopIfCurrentMotion(motionId)
-            return
-        }
         let elapsed = now - robotTurnLastTime
         if (elapsed <= 0) {
             return
@@ -616,6 +668,16 @@ namespace smartMotor {
         if (!gyroAngleIsValid(currentYaw)) {
             robotStopIfCurrentMotion(motionId)
             return
+        }
+        if (currentYaw == robotTurnLastYaw) {
+            robotTurnUnchangedMs += elapsed
+            if (robotTurnUnchangedMs >= ROBOT_TURN_GYRO_UNCHANGED_TIMEOUT_MS) {
+                robotStopIfCurrentMotion(motionId)
+                return
+            }
+        } else {
+            robotTurnLastYaw = currentYaw
+            robotTurnUnchangedMs = 0
         }
         let error = robotTurnTargetYaw - currentYaw
         let crossedTarget = (robotTurnLastError > 0 && error <= 0)
@@ -807,9 +869,10 @@ namespace smartMotor {
     export function motorReset(motor: MotorPort, waitMode: WaitMode = WaitMode.Wait): void {
         cancelRobotMotion()
         let motionId = nextMotorMotionId(motor)
+        let timeoutMs = waitMode == WaitMode.Wait ? motorResetTimeoutMs(motor) : 0
         i2cCommandSend(COMMAND_RESET_PHYSICAL, [motorMask(motor)])
         if (waitMode == WaitMode.Wait) {
-            waitForMotorReset(motor, motionId, MOTOR_RESET_TIMEOUT_MS)
+            waitForMotorReset(motor, motionId, timeoutMs)
         }
     }
 
@@ -840,6 +903,15 @@ namespace smartMotor {
         cancelRobotMotion()
         let motionId = nextMotorMotionId(motor)
         let normalized = normalizeAngleX10(Math.round(angle * 10))
+        let timeoutDegrees = 360
+        if (waitMode == WaitMode.Wait) {
+            let data = refreshFreshMotorData(motor, MOTOR_DATA_REFRESH_ANGLE)
+            if (data.length == MOTOR_DATA_RECORD_LENGTH
+                && (data[0] & MOTOR_DATA_ANGLE_VALID) != 0) {
+                timeoutDegrees = motorAbsoluteMoveDegrees(normalized,
+                    readI32Le(data, MOTOR_DATA_ABSOLUTE_ANGLE_OFFSET), turnMode, speed)
+            }
+        }
         let speedPercent = Math.abs(signedSpeed(speed))
         i2cCommandSend(COMMAND_MOVE_ABSOLUTE, [
             motor,
@@ -850,7 +922,8 @@ namespace smartMotor {
         ])
         if (waitMode == WaitMode.Wait) {
             waitForMotorAbsoluteMove(motor, normalized,
-                turnMode != MotorTurnMode.ShortestPath, motionId, motorAbsoluteTimeoutMs(speed))
+                turnMode != MotorTurnMode.ShortestPath, motionId,
+                motorAbsoluteTimeoutMs(timeoutDegrees, speed))
         }
     }
 
@@ -1018,7 +1091,8 @@ namespace smartMotor {
         robotTurnLastError = turnAngle
         robotTurnLastTime = input.runningTime()
         robotTurnAccel = accel
-        robotTurnDeadlineMs = robotTurnLastTime + ROBOT_TURN_TIMEOUT_MS
+        robotTurnLastYaw = currentYaw
+        robotTurnUnchangedMs = 0
         robotTurnActive = true
         startRobotWorker()
 
@@ -1095,7 +1169,7 @@ namespace smartMotor {
         robotDriveTargetYaw = currentYaw
         robotDriveLastTime = input.runningTime()
         robotDriveAccel = accel
-        robotDriveDeadlineMs = robotDriveLastTime + robotDriveTimeoutMs(driveValue, driveSpeed, mode)
+        robotDriveDeadlineMs = robotDriveLastTime + robotDriveTimeoutMs(driveValue, driveSpeed, mode, accel)
         robotDriveActive = true
         startRobotWorker()
 

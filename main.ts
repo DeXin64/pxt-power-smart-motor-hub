@@ -966,6 +966,22 @@ namespace smartMotor {
     }
 
     //% group="Robot"
+    //% blockId=smartmotor_robot_run block="robot run left wheel $leftSpeed % speed right wheel $rightSpeed % speed"
+    //% leftSpeed.min=-100 leftSpeed.max=100 leftSpeed.defl=50
+    //% rightSpeed.min=-100 rightSpeed.max=100 rightSpeed.defl=50
+    //% inlineInputMode=inline
+    //% weight=76
+    /**
+     * Run the selected robot left and right wheels directly without PID correction.
+     * @param leftSpeed left wheel speed from -100 to 100
+     * @param rightSpeed right wheel speed from -100 to 100
+     */
+    export function robotRun(leftSpeed: number, rightSpeed: number): void {
+        cancelRobotMotion()
+        sendRobotSpeed(clamp(leftSpeed, -100, 100), clamp(rightSpeed, -100, 100))
+    }
+
+    //% group="Robot"
     //% blockId=smartmotor_robot_turn block="robot turn $angle degrees speed $speed acceleration $accel || $waitMode"
     //% angle.min=-360 angle.max=360 angle.defl=90
     //% speed.min=0 speed.max=100 speed.defl=50
@@ -973,7 +989,7 @@ namespace smartMotor {
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
     //% expandableArgumentMode="toggle"
-    //% weight=76
+    //% weight=75
     /**
      * Turn the robot in place using gyroscope feedback.
      * @param angle turn angle in degrees, -360 to 360
@@ -1023,7 +1039,7 @@ namespace smartMotor {
     //% waitMode.defl=smartMotor.WaitMode.Wait
     //% inlineInputMode=inline
     //% expandableArgumentMode="toggle"
-    //% weight=75
+    //% weight=74
     /**
      * Drive the robot straight using a distance, time, or wheel-angle value.
      * @param direction forward or backward

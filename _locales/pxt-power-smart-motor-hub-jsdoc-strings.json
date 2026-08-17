@@ -7,6 +7,7 @@
     "smartMotor.DriveDirection": "Robot straight-drive direction.",
     "smartMotor.DriveMode": "Unit or mode used by the robot straight-drive block.",
     "smartMotor.AccelLevel": "Robot acceleration level.",
+    "smartMotor.RobotLoad": "Robot load level.",
     "smartMotor.WaitMode": "Whether a motor or robot command waits until the motion is complete.",
     "smartMotor.GyroAxis": "Gyroscope attitude axis.",
     "smartMotor.GyroMirror": "Robot gyroscope steering direction.",
@@ -37,9 +38,14 @@
     "smartMotor.robotSetMotors": "Select the motors used as the robot left and right wheels.",
     "smartMotor.robotSetMotors|param|leftMotor": "left wheel motor port M5-M8",
     "smartMotor.robotSetMotors|param|rightMotor": "right wheel motor port M5-M8",
+    "smartMotor.robotSetLoad": "Set the robot load level.",
+    "smartMotor.robotSetLoad|param|load": "light, medium, or heavy load",
     "smartMotor.robotSetGyro": "Select the gyroscope axis and direction used by robot turn and straight-drive correction.",
     "smartMotor.robotSetGyro|param|axis": "pitch, yaw, or roll axis",
     "smartMotor.robotSetGyro|param|mirror": "normal or mirrored direction",
+    "smartMotor.robotRun": "Run the selected robot left and right wheels directly without PID correction.",
+    "smartMotor.robotRun|param|leftSpeed": "left wheel speed from -100 to 100",
+    "smartMotor.robotRun|param|rightSpeed": "right wheel speed from -100 to 100",
     "smartMotor.robotTurn": "Turn the robot in place using gyroscope feedback.",
     "smartMotor.robotTurn|param|angle": "turn angle in degrees, -360 to 360",
     "smartMotor.robotTurn|param|speed": "speed from 0 to 100",
@@ -65,8 +71,5 @@
     "smartMotor.readGyroAngularSpeed|param|axis": "pitch, yaw, or roll axis",
     "smartMotor.readGyroAngle": "Read the host angle in degrees.",
     "smartMotor.readGyroAngle|param|axis": "pitch, yaw, or roll axis",
-    "smartMotor.readVersion": "Read the controller firmware version.",
-    "smartMotor.RobotLoad": "Robot load level.",
-    "smartMotor.robotSetLoad": "Set the robot load level.",
-    "smartMotor.robotSetLoad|param|load": "light, medium, or heavy load"
+    "smartMotor.readVersion": "Read the controller firmware version."
 }

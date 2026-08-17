@@ -19,6 +19,9 @@
     "smartMotor.AccelLevel.Slow|block": "slow",
     "smartMotor.AccelLevel.Medium|block": "medium",
     "smartMotor.AccelLevel.Fast|block": "fast",
+    "smartMotor.RobotLoad.Light|block": "light",
+    "smartMotor.RobotLoad.Medium|block": "medium",
+    "smartMotor.RobotLoad.Heavy|block": "heavy",
     "smartMotor.WaitMode.NoWait|block": "do not wait",
     "smartMotor.WaitMode.Wait|block": "wait until done",
     "smartMotor.GyroAxis.Pitch|block": "pitch",
@@ -33,7 +36,9 @@
     "smartMotor.motorMoveRelative|block": "motor $motor speed $speed direction $direction run $angle $unit || $waitMode",
     "smartMotor.robotSetWheelDiameter|block": "robot wheel diameter $diameter mm",
     "smartMotor.robotSetMotors|block": "robot set left wheel $leftMotor and set right wheel $rightMotor",
+    "smartMotor.robotSetLoad|block": "robot set load $load",
     "smartMotor.robotSetGyro|block": "robot gyroscope axis $axis mirror $mirror",
+    "smartMotor.robotRun|block": "robot run left wheel $leftSpeed % speed right wheel $rightSpeed % speed",
     "smartMotor.robotTurn|block": "robot turn $angle degrees speed $speed acceleration $accel || $waitMode",
     "smartMotor.robotDriveStraight|block": "robot drive $direction $value $mode speed $speed acceleration $accel || $waitMode",
     "smartMotor.robotStop|block": "robot stop",
@@ -51,9 +56,5 @@
     "{id:group}Gyroscope": "Gyroscope",
     "{id:group}Information": "Information",
     "smartMotor|block": "Smart Motor",
-    "{id:category}smartMotor": "Smart Motor",
-    "smartMotor.RobotLoad.Light|block": "light",
-    "smartMotor.RobotLoad.Medium|block": "medium",
-    "smartMotor.RobotLoad.Heavy|block": "heavy",
-    "smartMotor.robotSetLoad|block": "robot set load $load"
+    "{id:category}smartMotor": "Smart Motor"
 }

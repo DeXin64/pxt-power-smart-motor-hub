@@ -7,6 +7,7 @@
     "smartMotor.DriveDirection": "机器人直行方向。",
     "smartMotor.DriveMode": "机器人直行积木使用的单位或模式。",
     "smartMotor.AccelLevel": "机器人加速度等级。",
+    "smartMotor.RobotLoad": "机器人负重档位。",
     "smartMotor.WaitMode": "电机或机器人命令是否等待运动完成。",
     "smartMotor.GyroAxis": "陀螺仪姿态轴。",
     "smartMotor.GyroMirror": "机器人陀螺仪转向方向。",
@@ -37,9 +38,14 @@
     "smartMotor.robotSetMotors": "设置机器人左轮和右轮使用的电机。",
     "smartMotor.robotSetMotors|param|leftMotor": "左轮电机端口 M5-M8",
     "smartMotor.robotSetMotors|param|rightMotor": "右轮电机端口 M5-M8",
+    "smartMotor.robotSetLoad": "设置机器人负重档位。",
+    "smartMotor.robotSetLoad|param|load": "轻、中或重负重",
     "smartMotor.robotSetGyro": "设置机器人转向和直行校正使用的陀螺仪轴和方向。",
     "smartMotor.robotSetGyro|param|axis": "俯仰、偏航或横滚轴",
     "smartMotor.robotSetGyro|param|mirror": "正常或镜像方向",
+    "smartMotor.robotRun": "直接设置机器人左轮和右轮速度，不带 PID 校正。",
+    "smartMotor.robotRun|param|leftSpeed": "左轮速度，-100 到 100",
+    "smartMotor.robotRun|param|rightSpeed": "右轮速度，-100 到 100",
     "smartMotor.robotTurn": "使用陀螺仪反馈让机器人原地转向。",
     "smartMotor.robotTurn|param|angle": "转向角度，单位为度，-360 到 360",
     "smartMotor.robotTurn|param|speed": "速度，0 到 100",
@@ -65,8 +71,5 @@
     "smartMotor.readGyroAngularSpeed|param|axis": "俯仰、偏航或横滚轴",
     "smartMotor.readGyroAngle": "读取主机角度，单位为度。",
     "smartMotor.readGyroAngle|param|axis": "俯仰、偏航或横滚轴",
-    "smartMotor.readVersion": "读取控制器固件版本号。",
-    "smartMotor.RobotLoad": "机器人负重档位。",
-    "smartMotor.robotSetLoad": "设置机器人负重档位。",
-    "smartMotor.robotSetLoad|param|load": "轻、中或重负重"
+    "smartMotor.readVersion": "读取控制器固件版本号。"
 }

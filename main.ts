@@ -18,6 +18,7 @@ namespace smartMotor {
     const COMMAND_RESET_PHYSICAL = 0x24
     const COMMAND_ROBOT_SET_SPEED = 0x26
     const REGISTER_GYRO_ANGLE_START = 0x03
+    const REGISTER_HOST_ACCELERATION_START = 0x0F
     const MOTOR_DATA_RECORD_LENGTH = 13
     const MOTOR_DATA_ANGLE_VALID = 0x01
     const MOTOR_DATA_SPEED_VALID = 0x02
@@ -138,6 +139,16 @@ namespace smartMotor {
         Normal = 0,
         //% block="mirrored"
         Mirrored = 1
+    }
+
+    /** Host acceleration axis. */
+    export enum HostAccelAxis {
+        //% block="X"
+        X = 0,
+        //% block="Y"
+        Y = 1,
+        //% block="Z"
+        Z = 2
     }
 
     let robotLeftMotor = MotorPort.M5
@@ -1022,11 +1033,6 @@ namespace smartMotor {
         robotLoad = load
     }
 
-    //% group="Robot"
-    //% blockId=smartmotor_robot_set_gyro block="robot gyroscope axis $axis mirror $mirror"
-    //% axis.defl=smartMotor.GyroAxis.Yaw
-    //% mirror.defl=smartMotor.GyroMirror.Mirrored
-    //% weight=77
     /**
      * Select the gyroscope axis and direction used by robot turn and straight-drive correction.
      * @param axis pitch, yaw, or roll axis
@@ -1275,10 +1281,6 @@ namespace smartMotor {
         }
     }
 
-    //% group="Gyroscope"
-    //% blockId=smartmotor_gyro_angular_speed block="host $axis acceleration (mg)"
-    //% axis.defl=smartMotor.GyroAxis.Pitch
-    //% weight=59
     /**
      * Read the gyroscope angular speed in degrees per second.
      * @param axis pitch, yaw, or roll axis
@@ -1301,6 +1303,19 @@ namespace smartMotor {
         gyroSpeedLastAngle[index] = angle
         gyroSpeedLastTime[index] = now
         return angularSpeed
+    }
+
+    //% group="Gyroscope"
+    //% blockId=smartmotor_host_acceleration block="host $axis acceleration (mg)"
+    //% axis.defl=smartMotor.HostAccelAxis.X
+    //% weight=59
+    /**
+     * Read the host acceleration on the selected X, Y, or Z axis in mg.
+     * @param axis X, Y, or Z axis
+     */
+    export function readHostAcceleration(axis: HostAccelAxis): number {
+        let data = readRegisters(REGISTER_HOST_ACCELERATION_START + axis * 2, 2)
+        return data.length == 2 ? readI16Le(data, 0) : 0
     }
 
     //% group="Gyroscope"
